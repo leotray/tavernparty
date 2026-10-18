@@ -188,3 +188,12 @@ MonoBehaviour:
   _componentIndexCache: 255
   _addedNetworkObject: {fileID: 4656957447398049701}
   _networkObjectCache: {fileID: 0}
+  labelHeight: 1.6
+  labelFontSize: 28
+  skinPrefabs:
+  - {fileID: 6477055024434050261, guid: 2e7400fad9316c341b1a0f6cbc0d956d, type: 3}
+  - {fileID: 4733604949044126128, guid: aa772797087f730409af3770c223526e, type: 3}
+  - {fileID: 7461743991993037764, guid: 4616066af7ea68449970e598a09f02a5, type: 3}
+  feetOffsetFromPivot: 1
+  seatedController: {fileID: 0}
+  hipsOffsetFromSeat: {x: 0, y: 0.1, z: 0}

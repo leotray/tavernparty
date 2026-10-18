@@ -141,6 +141,13 @@ namespace TavernParty.Networking
             _listResult.Set(call);
         }
 
+        /// <summary>Host only: allow or block new players from joining the Steam lobby.</summary>
+        public void SetJoinable(bool joinable)
+        {
+            if (SteamReady && InLobby && IsHost)
+                SteamMatchmaking.SetLobbyJoinable(_lobbyId, joinable);
+        }
+
         /// <summary>Opens the Steam overlay friend list to invite people to this lobby.</summary>
         public void OpenInviteDialog()
         {
