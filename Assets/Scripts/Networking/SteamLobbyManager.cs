@@ -7,12 +7,6 @@ using UnityEngine;
 
 namespace TavernParty.Networking
 {
-    /// <summary>
-    /// Steam lobby + FishNet connection glue.
-    /// Host: creates a Steam lobby, starts FishNet server + client (host mode).
-    /// Join: via Steam friend invite / "Join Game", launch arg, or a short join code.
-    /// Initializes Steamworks itself, so do NOT also add Steamworks.NET's SteamManager.
-    /// </summary>
     public class SteamLobbyManager : MonoBehaviour
     {
         public static SteamLobbyManager Instance { get; private set; }
@@ -22,13 +16,10 @@ namespace TavernParty.Networking
         const string KeyGame = "game";
         const string KeyCode = "code";
         const string GameId = "TavernParty";
-        const string CodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no I, O, 0, 1
+        const string CodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
         const int CodeLength = 4;
 
-        [Tooltip("Public lets join codes work for anyone. FriendsOnly hides the lobby from code search for non-friends.")]
         [SerializeField] ELobbyType lobbyType = ELobbyType.k_ELobbyTypePublic;
-
-        [SerializeField] bool showDebugPanel = true;
 
         public bool SteamReady { get; private set; }
         public bool InLobby { get; private set; }
@@ -40,7 +31,6 @@ namespace TavernParty.Networking
         public event Action<string> StatusChanged;
 
         CSteamID _lobbyId;
-        string _codeInput = "";
 
         CallResult<LobbyCreated_t> _createResult;
         CallResult<LobbyMatchList_t> _listResult;
@@ -87,7 +77,6 @@ namespace TavernParty.Networking
 
             if (!SteamReady) return;
 
-            // Game launched through Steam's "Join Game" on a friend: +connect_lobby <lobbyId>
             string[] args = Environment.GetCommandLineArgs();
             for (int i = 0; i < args.Length - 1; i++)
             {
@@ -112,8 +101,6 @@ namespace TavernParty.Networking
             LeaveLobby();
             if (SteamReady) SteamAPI.Shutdown();
         }
-
-        // ---------- Public API ----------
 
         public void HostGame()
         {
@@ -141,14 +128,12 @@ namespace TavernParty.Networking
             _listResult.Set(call);
         }
 
-        /// <summary>Host only: allow or block new players from joining the Steam lobby.</summary>
         public void SetJoinable(bool joinable)
         {
             if (SteamReady && InLobby && IsHost)
                 SteamMatchmaking.SetLobbyJoinable(_lobbyId, joinable);
         }
 
-        /// <summary>Opens the Steam overlay friend list to invite people to this lobby.</summary>
         public void OpenInviteDialog()
         {
             if (!InLobby) return;
@@ -174,8 +159,6 @@ namespace TavernParty.Networking
             SetStatus("Left lobby.");
         }
 
-        // ---------- FishNet connection state ----------
-
         bool _leaving;
 
         void OnClientConnectionState(ClientConnectionStateArgs args)
@@ -198,8 +181,6 @@ namespace TavernParty.Networking
             }
         }
 
-        // ---------- Steam callbacks ----------
-
         void OnLobbyCreated(LobbyCreated_t result, bool ioFailure)
         {
             if (ioFailure || result.m_eResult != EResult.k_EResultOK)
@@ -216,7 +197,6 @@ namespace TavernParty.Networking
             SteamMatchmaking.SetLobbyData(_lobbyId, KeyCode, JoinCode);
             SteamMatchmaking.SetLobbyJoinable(_lobbyId, true);
 
-            // Host mode: server and client in the same instance.
             InstanceFinder.ServerManager.StartConnection();
             InstanceFinder.ClientManager.StartConnection();
 
@@ -237,14 +217,13 @@ namespace TavernParty.Networking
 
         void OnGameLobbyJoinRequested(GameLobbyJoinRequested_t request)
         {
-            // Friend invite accepted in the Steam overlay / friends list.
             if (InLobby) LeaveLobby();
             JoinLobby(request.m_steamIDLobby);
         }
 
         void OnLobbyEntered(LobbyEnter_t entered)
         {
-            if (IsHost) return; // we created this lobby; server/client already started
+            if (IsHost) return;
 
             uint response = entered.m_EChatRoomEnterResponse;
             if (response != (uint)EChatRoomEnterResponse.k_EChatRoomEnterResponseSuccess)
@@ -256,7 +235,6 @@ namespace TavernParty.Networking
             _lobbyId = new CSteamID(entered.m_ulSteamIDLobby);
             JoinCode = SteamMatchmaking.GetLobbyData(_lobbyId, KeyCode);
 
-            // The lobby owner is the FishNet host. Point the transport at their Steam ID.
             CSteamID owner = SteamMatchmaking.GetLobbyOwner(_lobbyId);
             InstanceFinder.NetworkManager.TransportManager.Transport.SetClientAddress(owner.ToString());
             InstanceFinder.ClientManager.StartConnection();
@@ -265,12 +243,10 @@ namespace TavernParty.Networking
             SetStatus("Joined lobby " + JoinCode + ", connecting...");
         }
 
-        // ---------- Helpers ----------
-
         void JoinLobby(CSteamID lobby)
         {
             SetStatus("Joining lobby...");
-            SteamMatchmaking.JoinLobby(lobby); // result arrives in OnLobbyEntered
+            SteamMatchmaking.JoinLobby(lobby);
         }
 
         static string GenerateCode()
@@ -286,33 +262,6 @@ namespace TavernParty.Networking
             Status = message;
             Debug.Log("[SteamLobby] " + message);
             StatusChanged?.Invoke(message);
-        }
-
-        // ---------- Temporary debug UI (replace with real UI later) ----------
-
-        void OnGUI()
-        {
-            if (!showDebugPanel) return;
-
-            GUILayout.BeginArea(new Rect(10, 10, 320, 300), GUI.skin.box);
-            GUILayout.Label("Tavern Party - Lobby (debug)");
-            GUILayout.Label(Status);
-
-            if (!InLobby)
-            {
-                if (GUILayout.Button("Host Game")) HostGame();
-                GUILayout.BeginHorizontal();
-                _codeInput = GUILayout.TextField(_codeInput, CodeLength, GUILayout.Width(100));
-                if (GUILayout.Button("Join By Code")) JoinByCode(_codeInput);
-                GUILayout.EndHorizontal();
-            }
-            else
-            {
-                GUILayout.Label("Code: " + JoinCode + (IsHost ? " (you are host)" : ""));
-                if (GUILayout.Button("Invite Friends (Steam overlay)")) OpenInviteDialog();
-                if (GUILayout.Button("Leave")) LeaveLobby();
-            }
-            GUILayout.EndArea();
         }
     }
 }

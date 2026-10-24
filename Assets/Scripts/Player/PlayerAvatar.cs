@@ -21,6 +21,7 @@ namespace TavernParty.Players
     {
         /// <summary>The avatar owned by this machine's player (client side).</summary>
         public static PlayerAvatar Local { get; private set; }
+        public readonly SyncVar<int> Score = new SyncVar<int>(0);
 
         /// <summary>Every player avatar this machine currently knows about.</summary>
         public static readonly List<PlayerAvatar> All = new List<PlayerAvatar>();
@@ -28,7 +29,6 @@ namespace TavernParty.Players
         public readonly SyncVar<string> PlayerName = new SyncVar<string>("");
         public readonly SyncVar<int> SkinIndex = new SyncVar<int>(0);
         public readonly SyncVar<bool> IsReady = new SyncVar<bool>(false);
-        public readonly SyncVar<int> Score = new SyncVar<int>(0);
 
         [Header("Name label")]
         [Tooltip("How far above the avatar's pivot the name appears (world units).")]
@@ -49,7 +49,6 @@ namespace TavernParty.Players
 
         TextMeshProUGUI _label;
         string _currentName = "";
-        bool _presenceVisible = true;
         GameObject _skinInstance;
         MeshRenderer _capsuleRenderer;
 
@@ -66,6 +65,7 @@ namespace TavernParty.Players
             _capsuleRenderer = GetComponent<MeshRenderer>();
             PlayerName.OnChange += OnNameChanged;
             SkinIndex.OnChange += OnSkinChanged;
+            
         }
 
         void OnDestroy()
@@ -109,7 +109,6 @@ namespace TavernParty.Players
             ApplySkin(SkinIndex.Value);
 
             if (!All.Contains(this)) All.Add(this);
-            Debug.Log("[PlayerAvatar] Started on this machine. Owner " + OwnerId + ", is mine: " + IsOwner);
 
             if (IsOwner)
             {
@@ -121,7 +120,6 @@ namespace TavernParty.Players
         public override void OnStopClient()
         {
             All.Remove(this);
-            Debug.Log("[PlayerAvatar] Stopped on this machine. Owner " + OwnerId);
             if (Local == this) Local = null;
         }
 
@@ -269,34 +267,6 @@ namespace TavernParty.Players
             AlignFeet(skin);
         }
 
-        // ---------- Lobby presence ----------
-
-        /// <summary>
-        /// The lobby avatar only exists visually while the lobby is open. During minigames it
-        /// hides itself (mesh, collider and name) but stays alive to keep the player's score and settings.
-        /// </summary>
-        void UpdatePresence()
-        {
-            GameFlowController flow = GameFlowController.Instance;
-            bool shouldShow = flow == null || !flow.InMinigame.Value;
-            if (shouldShow != _presenceVisible) SetPresence(shouldShow);
-        }
-
-        void SetPresence(bool visible)
-        {
-            foreach (Renderer r in GetComponentsInChildren<Renderer>(true))
-                r.enabled = visible;
-
-            // The plain capsule mesh stays hidden whenever a skin is in use.
-            if (visible && SkinCount > 0 && _capsuleRenderer != null)
-                _capsuleRenderer.enabled = false;
-
-            foreach (Collider c in GetComponentsInChildren<Collider>(true))
-                c.enabled = visible;
-
-            _presenceVisible = visible;
-        }
-
         // ---------- Name label ----------
 
         void EnsureLabel()
@@ -319,16 +289,8 @@ namespace TavernParty.Players
 
         void LateUpdate()
         {
-            UpdatePresence();
-
             EnsureLabel();
             if (_label == null) return;
-
-            if (!_presenceVisible)
-            {
-                _label.enabled = false;
-                return;
-            }
 
             Camera cam = Camera.main;
             if (cam == null)

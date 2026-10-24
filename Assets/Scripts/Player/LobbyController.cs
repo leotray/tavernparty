@@ -16,10 +16,9 @@ namespace TavernParty.Players
 
     /// <summary>
     /// Server-driven lobby state: ready-up, the host's Start button, a short countdown,
-    /// and the phase everyone can read.
-    /// This is a PREFAB (FishNet NetworkObject + this script) that the ManagerSpawner spawns when
-    /// the server starts. It is not placed in a scene, so there are no scene-object ID mismatches.
-    /// The GameFlowController takes over once the phase becomes Playing.
+    /// and the phase everyone can read. Put this on a GameObject in the Lobby scene
+    /// together with a FishNet NetworkObject component (a scene object, not a prefab).
+    /// The GameFlowController will take over once the phase becomes Playing.
     /// </summary>
     public class LobbyController : NetworkBehaviour
     {
@@ -87,13 +86,21 @@ namespace TavernParty.Players
             StartCoroutine(StartSequence());
         }
 
-        /// <summary>Server: called by the GameFlowController when the session is over.</summary>
-        [Server]
-        public void ServerResetToLobby()
+        [ServerRpc(RequireOwnership = false)]
+        public void RequestReturnToLobby(NetworkConnection sender = null)
         {
+            if (sender == null || !sender.IsHost) return;
+            if (Phase.Value == GamePhase.Lobby) return;
+
             StopAllCoroutines();
             Countdown.Value = 0;
             Phase.Value = GamePhase.Lobby;
+
+            foreach (PlayerAvatar player in PlayerAvatar.All)
+                player.IsReady.Value = false;
+
+            if (SteamLobbyManager.Instance != null)
+                SteamLobbyManager.Instance.SetJoinable(true);
         }
 
         // ---------- Server logic ----------
@@ -114,12 +121,7 @@ namespace TavernParty.Players
 
             Countdown.Value = 0;
             Phase.Value = GamePhase.Playing;
-
-            Debug.Log("[LobbyController] Countdown finished. GameFlowController found: " + (GameFlowController.Instance != null));
-            if (GameFlowController.Instance != null)
-                GameFlowController.Instance.ServerBeginSession();
-            else
-                Debug.LogWarning("[LobbyController] No GameFlowController found. Add it to the ManagerSpawner's list.");
+            Debug.Log("[LobbyController] Game started. The game flow takes over from here.");
         }
 
         // ---------- Temporary debug UI (replace with real UI later) ----------
@@ -127,10 +129,6 @@ namespace TavernParty.Players
         void OnGUI()
         {
             if (!showDebugPanel) return;
-
-            // During minigames the GameFlowController shows its own panel.
-            GameFlowController flow = GameFlowController.Instance;
-            if (flow != null && flow.InMinigame.Value) return;
 
             const float width = 300f;
             GUILayout.BeginArea(new Rect(Screen.width - width - 10f, 10f, width, 380f), GUI.skin.box);
@@ -170,7 +168,9 @@ namespace TavernParty.Players
                     break;
 
                 case GamePhase.Playing:
-                    GUILayout.Label("Game in progress...");
+                    GUILayout.Label("Game in progress (placeholder).");
+                    if (IsHostStarted && GUILayout.Button("Back To Lobby"))
+                        RequestReturnToLobby();
                     break;
             }
 

@@ -14,7 +14,7 @@ namespace TavernParty.Networking
     {
         [SerializeField] string lobbySceneName = "Lobby";
 
-        void Start()
+        void Awake()
         {
             if (InstanceFinder.ServerManager != null)
                 InstanceFinder.ServerManager.OnServerConnectionState += OnServerConnectionState;
@@ -28,8 +28,10 @@ namespace TavernParty.Networking
 
         void OnServerConnectionState(ServerConnectionStateArgs args)
         {
+            Debug.Log("[LobbySceneLoader] Server state: " + args.ConnectionState);
             if (args.ConnectionState != LocalConnectionState.Started) return;
 
+            Debug.Log("[LobbySceneLoader] Loading scene: " + lobbySceneName);
             var sceneData = new SceneLoadData(lobbySceneName);
             InstanceFinder.SceneManager.LoadGlobalScenes(sceneData);
         }
