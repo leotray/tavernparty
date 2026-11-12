@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Generic;
 using FishNet;
 using FishNet.Connection;
@@ -24,6 +24,7 @@ namespace TavernParty.Core
         public readonly SyncVar<int> SecondsLeft = new SyncVar<int>(0);
         public readonly SyncVar<int> TrollHostId = new SyncVar<int>(-1);
         public readonly SyncVar<string> MinigameName = new SyncVar<string>("");
+        public readonly SyncVar<int> PotatoHolderId = new SyncVar<int>(-1);
 
         [Header("Lobby")]
         [SerializeField] int minPlayersToStart = 2;
@@ -36,18 +37,12 @@ namespace TavernParty.Core
         [Header("Scenes")]
         [SerializeField] string lobbySceneName = "Lobby";
         [SerializeField] bool showDebugPanel = true;
-        MonoBehaviour gamemanager;
+
         Coroutine _session;
+        HotPotatoMinigame _hotPotatoGame;
 
-        public override void OnStartNetwork()
-        {
-            Instance = this;
-        }
-
-        public override void OnStopNetwork()
-        {
-            if (Instance == this) Instance = null;
-        }
+        public override void OnStartNetwork() { Instance = this; }
+        public override void OnStopNetwork() { if (Instance == this) Instance = null; }
 
         public bool CanStart(out string reason)
         {
@@ -83,6 +78,42 @@ namespace TavernParty.Core
             StartCoroutine(ReturnToLobby("Session aborted."));
         }
 
+        [ServerRpc(RequireOwnership = false)]
+        public void RequestPassPotato(int fromOwnerId, int toOwnerId, NetworkConnection sender = null)
+        {
+            if (_hotPotatoGame == null || Phase.Value != GamePhase.Playing) return;
+            if (_hotPotatoGame.CurrentHolderId != fromOwnerId) return;
+            if (toOwnerId == TrollHostId.Value) return;
+
+            bool validTarget = false;
+            foreach (PlayerAvatar p in PlayerAvatar.All)
+            {
+                if (p != null && p.OwnerId == toOwnerId)
+                {
+                    validTarget = true;
+                    break;
+                }
+            }
+
+            if (!validTarget) return;
+            _hotPotatoGame.SetHolder(toOwnerId);
+        }
+
+        [ServerRpc(RequireOwnership = false)]
+        public void RequestTrollAssignPotato(int toOwnerId, NetworkConnection sender = null)
+        {
+            if (_hotPotatoGame == null || Phase.Value != GamePhase.Playing) return;
+            if (sender == null || sender.ClientId != TrollHostId.Value) return;
+            if (toOwnerId == TrollHostId.Value) return;
+
+            bool validTarget = false;
+            foreach (PlayerAvatar p in PlayerAvatar.All)
+                if (p != null && p.OwnerId == toOwnerId) { validTarget = true; break; }
+
+            if (!validTarget) return;
+            _hotPotatoGame.SetHolder(toOwnerId);
+        }
+
         IEnumerator RunSession()
         {
             Phase.Value = GamePhase.Starting;
@@ -95,7 +126,6 @@ namespace TavernParty.Core
             }
             Countdown.Value = 0;
 
-            // SAFETY CHECK: Ensure all connected clients are fully authenticated before shifting scenes
             float authWait = 0f;
             bool allAuthenticated = false;
             while (!allAuthenticated && authWait < 5f)
@@ -103,17 +133,9 @@ namespace TavernParty.Core
                 allAuthenticated = true;
                 foreach (NetworkConnection conn in InstanceFinder.ServerManager.Clients.Values)
                 {
-                    if (!conn.IsAuthenticated)
-                    {
-                        allAuthenticated = false;
-                        break;
-                    }
+                    if (!conn.IsAuthenticated) { allAuthenticated = false; break; }
                 }
-                if (!allAuthenticated)
-                {
-                    authWait += Time.deltaTime;
-                    yield return null;
-                }
+                if (!allAuthenticated) { authWait += Time.deltaTime; yield return null; }
             }
 
             List<PlayerAvatar> players = new List<PlayerAvatar>(PlayerAvatar.All);
@@ -124,7 +146,7 @@ namespace TavernParty.Core
             TotalRounds.Value = hostOrder.Count;
 
             UnloadScene(lobbySceneName);
-            yield return new WaitForSeconds(0.5f); // Slightly padded buffer for scene tear-down
+            yield return new WaitForSeconds(0.5f);
 
             for (int i = 0; i < hostOrder.Count; i++)
             {
@@ -136,11 +158,7 @@ namespace TavernParty.Core
                     if (p != null && p != host) active.Add(p);
 
                 MinigameDefinition def = PickMinigame();
-                if (def == null)
-                {
-                    Debug.LogError("[GameManager] No minigame definitions assigned.");
-                    break;
-                }
+                if (def == null) { Debug.LogError("[GameManager] No minigames assigned."); break; }
 
                 Round.Value = i + 1;
                 TrollHostId.Value = host.OwnerId;
@@ -153,7 +171,37 @@ namespace TavernParty.Core
                 while (!UnityEngine.SceneManagement.SceneManager.GetSceneByName(def.sceneName).isLoaded && waited < 15f)
                 { waited += Time.deltaTime; yield return null; }
 
-                yield return new WaitForSeconds(2f);
+                // --- FIX: Wait for physics frames to bake colliders before teleporting ---
+                yield return new WaitForFixedUpdate();
+                yield return new WaitForFixedUpdate();
+                yield return new WaitForFixedUpdate();
+
+                yield return new WaitForSeconds(0.5f);
+
+                // --- TELEPORT ACTIVE PLAYERS ---
+                for (int pIdx = 0; pIdx < active.Count; pIdx++)
+                {
+                    if (active[pIdx] != null)
+                    {
+                        Vector3 spawnPos = MinigameSpawnPoints.Instance != null
+                            ? MinigameSpawnPoints.Instance.GetSpawnPosition(pIdx)
+                            : new Vector3((pIdx - 3.5f) * 2f, 1f, 0f);
+
+                        active[pIdx].RpcTeleport(spawnPos, Quaternion.identity);
+                    }
+                }
+
+                // --- TELEPORT TROLL HOST ---
+                if (host != null)
+                {
+                    Vector3 trollPos = MinigameSpawnPoints.Instance != null
+                        ? MinigameSpawnPoints.Instance.GetTrollSpawnPosition()
+                        : new Vector3(0f, 1f, -5f);
+
+                    host.RpcTeleport(trollPos, Quaternion.identity);
+                }
+
+                yield return new WaitForSeconds(1.5f);
 
                 MinigameBase game = CreateMinigame(def);
                 MinigameContext ctx = new MinigameContext
@@ -165,12 +213,9 @@ namespace TavernParty.Core
                 };
                 game.OnBegin(ctx);
 
-                float remaining = def.durationSeconds;
-                while (remaining > 0f && !game.IsFinished)
+                while (!game.IsFinished)
                 {
-                    SecondsLeft.Value = Mathf.CeilToInt(remaining);
-                    game.OnTick(Time.deltaTime); 
-                    remaining -= Time.deltaTime;
+                    game.OnTick(Time.deltaTime);
                     yield return null;
                 }
                 SecondsLeft.Value = 0;
@@ -199,14 +244,13 @@ namespace TavernParty.Core
         IEnumerator ReturnToLobby(string reason)
         {
             Debug.Log("[GameManager] Returning to lobby: " + reason);
-
             foreach (PlayerAvatar p in PlayerAvatar.All) p.IsReady.Value = false;
-
             Round.Value = 0; TotalRounds.Value = 0;
             TrollHostId.Value = -1; MinigameName.Value = "";
             SecondsLeft.Value = 0; Countdown.Value = 0;
+            PotatoHolderId.Value = -1;
+            _hotPotatoGame = null;
             Phase.Value = GamePhase.Lobby;
-
             LoadScene(lobbySceneName);
             SteamLobbyManager.Instance?.SetJoinable(true);
             _session = null;
@@ -224,27 +268,22 @@ namespace TavernParty.Core
             if (def == null) return new PlaceholderMinigame();
 
             if (def.sceneName.Contains("HotPotato") || def.displayName.Contains("Hot Potato"))
-                return new HotPotatoMinigame();
+            {
+                _hotPotatoGame = new HotPotatoMinigame();
+                return _hotPotatoGame;
+            }
 
+            _hotPotatoGame = null;
             return new PlaceholderMinigame();
         }
+
         void LoadScene(string sceneName)
         {
             SceneLoadData sld = new SceneLoadData(sceneName);
-
-            // Carry all active player avatars into the new scene so they don't get destroyed
             List<NetworkObject> playerObjects = new List<NetworkObject>();
             foreach (PlayerAvatar p in PlayerAvatar.All)
-            {
-                if (p != null && p.NetworkObject != null)
-                    playerObjects.Add(p.NetworkObject);
-            }
-
-            if (playerObjects.Count > 0)
-            {
-                sld.MovedNetworkObjects = playerObjects.ToArray();
-            }
-
+                if (p != null && p.NetworkObject != null) playerObjects.Add(p.NetworkObject);
+            if (playerObjects.Count > 0) sld.MovedNetworkObjects = playerObjects.ToArray();
             InstanceFinder.SceneManager.LoadGlobalScenes(sld);
         }
 
@@ -274,12 +313,8 @@ namespace TavernParty.Core
         void OnGUI()
         {
             if (!showDebugPanel) return;
-
             const float w = 320f;
-            float y = 10f;
-
-            GUILayout.BeginArea(new Rect(Screen.width - w - 10f, y, w, Screen.height - 20f), GUI.skin.box);
-
+            GUILayout.BeginArea(new Rect(Screen.width - w - 10f, 10f, w, Screen.height - 20f), GUI.skin.box);
             GUILayout.Label("=== GameManager Debug ===");
             GUILayout.Label("Phase: " + Phase.Value);
 
@@ -290,15 +325,11 @@ namespace TavernParty.Core
                     GUILayout.Label("Players (" + PlayerAvatar.All.Count + "):");
                     foreach (PlayerAvatar p in PlayerAvatar.All)
                         GUILayout.Label((p.IsReady.Value ? "[RDY] " : "[ .. ] ") + p.PlayerName.Value + "  (" + p.Score.Value + " pts)");
-
                     GUILayout.Space(4);
                     PlayerAvatar me = PlayerAvatar.Local;
                     if (me != null)
-                    {
                         if (GUILayout.Button(me.IsReady.Value ? "Not Ready" : "Ready"))
                             me.RequestReady(!me.IsReady.Value);
-                    }
-
                     if (base.IsServerStarted)
                     {
                         bool can = CanStart(out string reason);
@@ -307,10 +338,7 @@ namespace TavernParty.Core
                         GUI.enabled = true;
                         if (!can) GUILayout.Label(reason);
                     }
-                    else
-                    {
-                        GUILayout.Label("Waiting for host to start...");
-                    }
+                    else GUILayout.Label("Waiting for host to start...");
                     break;
 
                 case GamePhase.Starting:
@@ -323,17 +351,17 @@ namespace TavernParty.Core
                     GUILayout.Label("Minigame: " + MinigameName.Value);
                     PlayerAvatar host = FindPlayer(TrollHostId.Value);
                     GUILayout.Label("Troll Host: " + (host != null ? host.PlayerName.Value : "?"));
-                    GUILayout.Label(Phase.Value == GamePhase.Playing
-                        ? "Time left: " + SecondsLeft.Value + "s"
-                        : "Round over!");
-
+                    GUILayout.Label(Phase.Value == GamePhase.Playing ? "Time left: " + SecondsLeft.Value + "s" : "Round over!");
+                    if (Phase.Value == GamePhase.Playing && PotatoHolderId.Value != -1)
+                    {
+                        PlayerAvatar holder = FindPlayer(PotatoHolderId.Value);
+                        GUILayout.Label("Potato: " + (holder != null ? holder.PlayerName.Value : "?"));
+                    }
                     GUILayout.Space(4);
                     GUILayout.Label("Scores:");
                     List<PlayerAvatar> ranked = new List<PlayerAvatar>(PlayerAvatar.All);
                     ranked.Sort((a, b) => b.Score.Value.CompareTo(a.Score.Value));
-                    foreach (PlayerAvatar p in ranked)
-                        GUILayout.Label(p.Score.Value + "  " + p.PlayerName.Value);
-
+                    foreach (PlayerAvatar p in ranked) GUILayout.Label(p.Score.Value + "  " + p.PlayerName.Value);
                     if (base.IsServerStarted && GUILayout.Button("Abort")) RequestAbort();
                     break;
 
@@ -341,11 +369,9 @@ namespace TavernParty.Core
                     GUILayout.Label("Session over! Final scores:");
                     List<PlayerAvatar> final = new List<PlayerAvatar>(PlayerAvatar.All);
                     final.Sort((a, b) => b.Score.Value.CompareTo(a.Score.Value));
-                    foreach (PlayerAvatar p in final)
-                        GUILayout.Label(p.Score.Value + "  " + p.PlayerName.Value);
+                    foreach (PlayerAvatar p in final) GUILayout.Label(p.Score.Value + "  " + p.PlayerName.Value);
                     break;
             }
-
             GUILayout.EndArea();
         }
     }

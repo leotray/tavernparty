@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: 737a8d28b59eb3948b2dddab974841d1
+ShaderImporter:
+  externalObjects: {}
+  defaultTextures: []
+  nonModifiableTextures: []
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 395420
+  packageName: Free - URP Flipbook VFX Bundle Lite
+  packageVersion: 1.0.1
+  assetPath: Assets/Vefects/Flipbook VFX Bundle Lite/Pixel Craft VFX/_ Lite/Shaders/Lite_SH_Vefects_URP_Unlit_Flipbook_Pixel_01.shader
+  uploadId: 961254

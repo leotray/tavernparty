@@ -1,60 +1,129 @@
 using UnityEngine;
-using System.Collections.Generic;
 using TavernParty.Players;
+using System.Collections.Generic;
 
 namespace TavernParty.Core
 {
     public class HotPotatoMinigame : MinigameBase
     {
-        float passTimer;
-        float passInterval = 2.5f; // Potato bounces every 2.5 seconds
         int currentHolderId = -1;
+        float roundTimer = 10f;
+        List<PlayerAvatar> survivingPlayers = new List<PlayerAvatar>();
+
+        public int CurrentHolderId => currentHolderId;
 
         public override void OnBegin(MinigameContext context)
         {
             base.OnBegin(context);
-            PickNewHolder();
-            Debug.Log("[HotPotato] Round started! Potato is live.");
+            survivingPlayers = new List<PlayerAvatar>(Context.ActivePlayers);
+
+            // Ensure all participating players start the round alive
+            foreach (var p in survivingPlayers)
+            {
+                if (p != null) p.RequestSetAlive(true);
+            }
+
+            StartNewEliminationRound();
+        }
+
+        void StartNewEliminationRound()
+        {
+            survivingPlayers.RemoveAll(p => p == null || !p.IsAlive.Value);
+
+            if (survivingPlayers.Count <= 1)
+            {
+                IsFinished = true;
+                return;
+            }
+
+            int randomIndex = Random.Range(0, survivingPlayers.Count);
+            PlayerAvatar startHolder = survivingPlayers[randomIndex];
+
+            currentHolderId = startHolder.OwnerId;
+            if (GameManager.Instance != null)
+                GameManager.Instance.PotatoHolderId.Value = currentHolderId;
+
+            roundTimer = 10f;
+            Debug.Log("[HotPotato] Elimination round started! Potato held by: " + startHolder.PlayerName.Value);
         }
 
         public override void OnTick(float deltaTime)
         {
-            base.OnTick(deltaTime);
+            if (IsFinished) return;
 
-            passTimer += deltaTime;
-            if (passTimer >= passInterval)
+            roundTimer -= deltaTime;
+            if (GameManager.Instance != null)
+                GameManager.Instance.SecondsLeft.Value = Mathf.CeilToInt(roundTimer);
+
+            if (roundTimer <= 0f)
             {
-                passTimer = 0f;
-                PickNewHolder();
+                ExplodeHolder();
+            }
+        }
+
+        void ExplodeHolder()
+        {
+            PlayerAvatar victim = FindPlayer(currentHolderId);
+            if (victim != null)
+            {
+                Debug.Log("[HotPotato] BOOM! " + victim.PlayerName.Value + " exploded and was eliminated.");
+
+                // Set player to dead / spectator mode
+                victim.RequestSetAlive(false);
+                survivingPlayers.Remove(victim);
+
+                // Award survival points to surviving players
+                foreach (PlayerAvatar p in survivingPlayers)
+                {
+                    if (p != null && p.IsAlive.Value)
+                    {
+                        AddPoints(p, Context.SurvivalPoints);
+                    }
+                }
+
+                if (survivingPlayers.Count <= 1)
+                {
+                    IsFinished = true;
+                }
+                else
+                {
+                    StartNewEliminationRound();
+                }
+            }
+            else
+            {
+                StartNewEliminationRound();
             }
         }
 
         public override void OnEnd()
         {
-            // Award survival points to everyone EXCEPT the player holding the potato at the end
-            foreach (PlayerAvatar player in Context.ActivePlayers)
+            if (GameManager.Instance != null)
+                GameManager.Instance.PotatoHolderId.Value = -1;
+
+            // Reset all players back to alive state when minigame closes
+            foreach (var p in Context.ActivePlayers)
             {
-                if (player.OwnerId != currentHolderId)
-                {
-                    AddPoints(player, Context.SurvivalPoints);
-                }
+                if (p != null) p.RequestSetAlive(true);
             }
 
-            Debug.Log("[HotPotato] Round ended! Holder ID " + currentHolderId + " got caught with the potato.");
+            Debug.Log("[HotPotato] Minigame session ended.");
         }
 
-        void PickNewHolder()
+        public void SetHolder(int ownerId)
         {
-            if (Context.ActivePlayers == null || Context.ActivePlayers.Count == 0) return;
+            currentHolderId = ownerId;
+            if (GameManager.Instance != null)
+                GameManager.Instance.PotatoHolderId.Value = currentHolderId;
+        }
 
-            int randomIndex = UnityEngine.Random.Range(0, Context.ActivePlayers.Count);
-            PlayerAvatar newHolder = Context.ActivePlayers[randomIndex];
-
-            if (newHolder != null)
+        PlayerAvatar FindPlayer(int ownerId)
+        {
+            foreach (PlayerAvatar p in Context.ActivePlayers)
             {
-                currentHolderId = newHolder.OwnerId;
-                Debug.Log("[HotPotato] Potato bounced to: " + newHolder.PlayerName.Value);
+                if (p != null && p.OwnerId == ownerId) return p;
             }
+            return null;
         }
     }
 }

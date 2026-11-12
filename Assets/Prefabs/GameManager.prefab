@@ -109,6 +109,6 @@ MonoBehaviour:
   countdownSeconds: 3
   resultSeconds: 5
   minigames:
-  - {fileID: 11400000, guid: 0225e987465faf548b4719227ab17382, type: 2}
+  - {fileID: 11400000, guid: 928bf19ba5bb745408204773b550a237, type: 2}
   lobbySceneName: Lobby
   showDebugPanel: 1

@@ -597,7 +597,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 409499232}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 50994812541cd6744b6fcfc874c26492, type: 3}
   m_Name: 
@@ -975,6 +975,7 @@ GameObject:
   - component: {fileID: 844522190}
   - component: {fileID: 844522192}
   - component: {fileID: 844522193}
+  - component: {fileID: 844522194}
   m_Layer: 0
   m_Name: NetworkManager
   m_TagString: Untagged
@@ -1011,7 +1012,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 34e4a322dca349547989b14021da4e23, type: 3}
   m_Name: 
   m_EditorClassIdentifier: FishNet.Runtime::FishNet.Managing.Transporting.TransportManager
-  Transport: {fileID: 844522186}
+  Transport: {fileID: 844522193}
   _maximumClientPacketSize: 20480
   _intermediateLayer: {fileID: 0}
   _latencySimulator:
@@ -1102,7 +1103,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 844522185}
-  m_Enabled: 0
+  m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 6f48f002b825cbd45a19bd96d90f9edb, type: 3}
   m_Name: 
@@ -1116,6 +1117,19 @@ MonoBehaviour:
   _port: 7770
   _maximumClients: 4095
   _clientAddress: localhost
+--- !u!114 &844522194
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 844522185}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 13890740c5ce60544ab330ed38b8eb02, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::TavernParty.Networking.LocalTestManager
+  tugboat: {fileID: 0}
 --- !u!1 &864661630
 GameObject:
   m_ObjectHideFlags: 0
@@ -2105,7 +2119,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 32bca5b79508a5f468adb970d2917876, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MenuMusic
-  musicClip: {fileID: 8300000, guid: 2b5593525afc8984f85a4b8f5b854487, type: 3}
+  musicClip: {fileID: 8300000, guid: 7cfd4239ef826764286a5c930a443d9a, type: 3}
 --- !u!82 &1409029278
 AudioSource:
   m_ObjectHideFlags: 0

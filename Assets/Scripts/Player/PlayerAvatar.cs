@@ -8,22 +8,12 @@ using UnityEngine;
 
 namespace TavernParty.Players
 {
-    /// <summary>
-    /// Lobby avatar: a networked root object (capsule) with a floating name label and a
-    /// swappable visual skin.
-    /// - The owning client sends its Steam name and chosen skin to the server.
-    /// - The server stores them in SyncVars, so every client (including late joiners) sees them.
-    /// - The name label is screen-space UI (see PlayerLabelLayer), so it stays sharp.
-    /// - Skins are visual-only prefabs placed as a child; the capsule mesh is hidden once a skin shows.
-    /// Put this on the capsule prefab next to a NetworkObject component.
-    /// </summary>
     public class PlayerAvatar : NetworkBehaviour
     {
-        /// <summary>The avatar owned by this machine's player (client side).</summary>
         public static PlayerAvatar Local { get; private set; }
         public readonly SyncVar<int> Score = new SyncVar<int>(0);
+        public readonly SyncVar<bool> IsAlive = new SyncVar<bool>(true);
 
-        /// <summary>Every player avatar this machine currently knows about.</summary>
         public static readonly List<PlayerAvatar> All = new List<PlayerAvatar>();
 
         public readonly SyncVar<string> PlayerName = new SyncVar<string>("");
@@ -31,26 +21,25 @@ namespace TavernParty.Players
         public readonly SyncVar<bool> IsReady = new SyncVar<bool>(false);
 
         [Header("Name label")]
-        [Tooltip("How far above the avatar's pivot the name appears (world units).")]
         [SerializeField] float labelHeight = 1.6f;
         [SerializeField] float labelFontSize = 28f;
 
         [Header("Skins")]
-        [Tooltip("Visual-only skin prefabs (no NetworkObject). Order = selection order.")]
         [SerializeField] GameObject[] skinPrefabs;
-        [Tooltip("Height of this object's pivot above the spawn point (capsule = 1). Match LobbySpawnPoints' pivot height.")]
         [SerializeField] float feetOffsetFromPivot = 1f;
 
+        [Header("Elimination / Spectator")]
+        [SerializeField] GameObject ghostVisuals;
+
         [Header("Seated pose")]
-        [Tooltip("Optional. Forces ONE controller on every skin. Leave empty to use the controller set on each skin prefab's own Animator.")]
         [SerializeField] RuntimeAnimatorController seatedController;
-        [Tooltip("Where the hips end up relative to the spawn point. Place spawn points on the seat surface.")]
         [SerializeField] Vector3 hipsOffsetFromSeat = new Vector3(0f, 0.1f, 0f);
 
         TextMeshProUGUI _label;
         string _currentName = "";
         GameObject _skinInstance;
         MeshRenderer _capsuleRenderer;
+        CharacterController _characterController;
 
         public int SkinCount => skinPrefabs == null ? 0 : skinPrefabs.Length;
 
@@ -63,50 +52,86 @@ namespace TavernParty.Players
         void Awake()
         {
             _capsuleRenderer = GetComponent<MeshRenderer>();
+            _characterController = GetComponent<CharacterController>();
             PlayerName.OnChange += OnNameChanged;
             SkinIndex.OnChange += OnSkinChanged;
-            
+            IsAlive.OnChange += OnAliveChanged;
         }
 
         void OnDestroy()
         {
             PlayerName.OnChange -= OnNameChanged;
             SkinIndex.OnChange -= OnSkinChanged;
+            IsAlive.OnChange -= OnAliveChanged;
             if (_label != null) Destroy(_label.gameObject);
+        }
+
+        public void RequestSetAlive(bool alive)
+        {
+            if (base.IsServerStarted)
+                IsAlive.Value = alive;
+        }
+
+        void OnAliveChanged(bool prev, bool next, bool asServer)
+        {
+            ApplyAliveState(next);
+        }
+
+        void ApplyAliveState(bool alive)
+        {
+            if (_skinInstance != null) _skinInstance.SetActive(alive);
+            if (_capsuleRenderer != null) _capsuleRenderer.enabled = alive && (_skinInstance == null);
+            if (_characterController != null) _characterController.enabled = alive;
+
+            if (ghostVisuals != null) ghostVisuals.SetActive(!alive);
+
+            if (IsOwner && !alive)
+            {
+                // Directly call the component on this player instance!
+                GetComponent<SpectatorCamController>()?.EnableSpectatorMode();
+            }
+        }
+
+        // --- NETWORK TELEPORTATION ---
+
+        [ObserversRpc]
+        public void RpcTeleport(Vector3 position, Quaternion rotation)
+        {
+            if (_characterController != null) _characterController.enabled = false;
+
+            transform.SetPositionAndRotation(position, rotation);
+
+            if (_characterController != null) _characterController.enabled = true;
         }
 
         public override void OnStartServer()
         {
             if (LobbySpawnPoints.Instance != null)
             {
-                // Take the first free spawn point placed in the Lobby scene.
                 LobbySpawnPoints.Instance.Claim(ObjectId, out Vector3 pos, out Quaternion rot);
                 transform.SetPositionAndRotation(pos, rot);
             }
             else
             {
-                // Fallback if no spawn points exist: spread players out along X.
                 float x = (OwnerId % 8 - 3.5f) * 1.5f;
                 transform.position = new Vector3(x, 1f, 0f);
             }
 
-            // Give each new player a different starting skin.
             if (SkinCount > 0)
                 SkinIndex.Value = Mathf.Abs(OwnerId) % SkinCount;
         }
 
         public override void OnStopServer()
         {
-            // Free the spawn point so the next player who joins can use it.
             if (LobbySpawnPoints.Instance != null)
                 LobbySpawnPoints.Instance.Release(ObjectId);
         }
 
         public override void OnStartClient()
         {
-            // Late joiners get the current values from the SyncVars.
             ApplyName(PlayerName.Value);
             ApplySkin(SkinIndex.Value);
+            ApplyAliveState(IsAlive.Value);
 
             if (!All.Contains(this)) All.Add(this);
 
@@ -123,9 +148,6 @@ namespace TavernParty.Players
             if (Local == this) Local = null;
         }
 
-        // ---------- Ready state ----------
-
-        /// <summary>Called by this machine's player to toggle ready.</summary>
         public void RequestReady(bool ready)
         {
             if (IsOwner) ServerSetReady(ready);
@@ -134,13 +156,10 @@ namespace TavernParty.Players
         [ServerRpc]
         void ServerSetReady(bool ready)
         {
-            // Ready state can only change while we are still in the lobby.
             LobbyController lobby = LobbyController.Instance;
             if (lobby != null && lobby.Phase.Value != GamePhase.Lobby) return;
             IsReady.Value = ready;
         }
-
-        // ---------- Name ----------
 
         [ServerRpc]
         void ServerSetName(string requestedName)
@@ -170,9 +189,6 @@ namespace TavernParty.Players
             if (_label != null) _label.text = _currentName;
         }
 
-        // ---------- Skin ----------
-
-        /// <summary>Called by this machine's player to pick a skin.</summary>
         public void RequestSkin(int index)
         {
             if (IsOwner) ServerSetSkin(index);
@@ -192,7 +208,7 @@ namespace TavernParty.Players
 
         void ApplySkin(int index)
         {
-            if (SkinCount == 0) return; // no skins assigned: keep showing the capsule
+            if (SkinCount == 0) return;
 
             index = Mathf.Clamp(index, 0, SkinCount - 1);
             GameObject prefab = skinPrefabs[index];
@@ -200,13 +216,9 @@ namespace TavernParty.Players
 
             if (_skinInstance != null) Destroy(_skinInstance);
 
-            // Keep the prefab's own rotation and scale (imported models often carry an axis fix
-            // like -90 on X). Only the position is reset. Resetting the rotation made skins lie face-down.
             _skinInstance = Instantiate(prefab, transform);
             _skinInstance.transform.localPosition = Vector3.zero;
 
-            // Each skin can carry its own controller (set on the skin prefab's Animator component).
-            // The optional "Seated Controller" slot on this script overrides it for every skin.
             Animator animator = _skinInstance.GetComponentInChildren<Animator>();
             if (animator != null)
             {
@@ -218,23 +230,16 @@ namespace TavernParty.Players
                     animator.applyRootMotion = false;
                     animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
                     animator.Rebind();
-                    animator.Update(0f); // evaluate the first frame now so we can measure the pose
+                    animator.Update(0f);
                 }
-            }
-            else if (seatedController != null)
-            {
-                Debug.LogWarning("Skin '" + prefab.name + "' has no Animator, so it cannot play the seated animation.");
             }
 
             PlaceSkin(_skinInstance, animator);
 
             if (_capsuleRenderer != null) _capsuleRenderer.enabled = false;
+            ApplyAliveState(IsAlive.Value);
         }
 
-        /// <summary>
-        /// Moves the skin so its lowest point touches the floor, whatever its pivot
-        /// or height is (the pivot can be in the middle of the body).
-        /// </summary>
         void AlignFeet(GameObject skin)
         {
             Renderer[] renderers = skin.GetComponentsInChildren<Renderer>();
@@ -248,9 +253,6 @@ namespace TavernParty.Players
             skin.transform.position += Vector3.up * (desiredBottom - bounds.min.y);
         }
 
-        /// <summary>
-        /// Seated skins: puts the hips on the seat (the spawn point). Standing skins: feet on the floor.
-        /// </summary>
         void PlaceSkin(GameObject skin, Animator animator)
         {
             if (animator != null && animator.runtimeAnimatorController != null && animator.isHuman)
@@ -266,8 +268,6 @@ namespace TavernParty.Players
 
             AlignFeet(skin);
         }
-
-        // ---------- Name label ----------
 
         void EnsureLabel()
         {
@@ -299,8 +299,6 @@ namespace TavernParty.Players
                 return;
             }
 
-            // Project the point above the head onto the screen. On a Screen Space - Overlay
-            // canvas, a RectTransform's position is in screen pixels.
             Vector3 vp = cam.WorldToViewportPoint(transform.position + Vector3.up * labelHeight);
             bool visible = vp.z > 0f && vp.x >= 0f && vp.x <= 1f && vp.y >= 0f && vp.y <= 1f;
 

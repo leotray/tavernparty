@@ -37,11 +37,9 @@ namespace TavernParty.Players
                 return;
             }
 
-            // Disable camera until we confirm spawn position
             if (fpsCameraTransform != null)
                 fpsCameraTransform.gameObject.SetActive(false);
 
-            // Unlock cursor in lobby
             Cursor.lockState = CursorLockMode.None;
             Cursor.visible = true;
         }
@@ -56,21 +54,15 @@ namespace TavernParty.Players
         {
             if (!base.IsOwner) return;
 
-            // Record spawn position one frame after spawn
-            // so the server has had time to place us at the spawn point
             if (!_spawnRecorded)
             {
                 _spawnPosition = transform.position;
                 _spawnRotation = transform.rotation;
                 _spawnRecorded = true;
 
-                // Freeze rigidbody at spawn
                 if (_rb != null)
-                {
                     _rb.isKinematic = true;
-                }
 
-                // Activate camera now that we know where we are
                 if (fpsCameraTransform != null)
                     fpsCameraTransform.gameObject.SetActive(true);
 
@@ -81,7 +73,6 @@ namespace TavernParty.Players
 
             if (!playing)
             {
-                // Locked at spawn in lobby
                 Cursor.lockState = CursorLockMode.None;
                 Cursor.visible = true;
 
@@ -93,11 +84,8 @@ namespace TavernParty.Players
                 return;
             }
 
-            // Playing phase — enable physics and lock cursor
             if (_rb != null && _rb.isKinematic)
-            {
                 _rb.isKinematic = false;
-            }
 
             if (Cursor.lockState != CursorLockMode.Locked)
             {
@@ -105,7 +93,8 @@ namespace TavernParty.Players
                 Cursor.visible = false;
             }
 
-            HandleMouseLook();
+            if (Application.isFocused)
+                HandleMouseLook();
         }
 
         void FixedUpdate()
@@ -132,6 +121,15 @@ namespace TavernParty.Players
 
         void HandleMovement()
         {
+            if (!Application.isFocused)
+            {
+                Vector3 v = _rb.linearVelocity;
+                v.x = 0f;
+                v.z = 0f;
+                _rb.linearVelocity = v;
+                return;
+            }
+
             float moveX = Input.GetAxisRaw("Horizontal");
             float moveZ = Input.GetAxisRaw("Vertical");
 
@@ -149,5 +147,30 @@ namespace TavernParty.Players
 
             _rb.linearVelocity = velocity;
         }
+        void OnDisable()
+        {
+            // Stop any residual movement when script/component is disabled
+            if (TryGetComponent<Rigidbody>(out Rigidbody rb))
+            {
+                rb.linearVelocity = new Vector3(0f, rb.linearVelocity.y, 0f);
+            }
+        }
+        void OnApplicationFocus(bool hasFocus)
+        {
+            if (!base.IsOwner) return;
+
+            if (!hasFocus)
+            {
+                // Instantly kill horizontal momentum when tabbing out
+                if (_rb != null)
+                {
+                    Vector3 v = _rb.linearVelocity;
+                    v.x = 0f;
+                    v.z = 0f;
+                    _rb.linearVelocity = v;
+                }
+            }
+        }
     }
+
 }
